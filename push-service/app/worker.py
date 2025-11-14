@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import httpx
+from datetime import datetime
 
 from app.config import settings
 from app.services.circuit_breaker import CircuitBreaker
@@ -17,6 +18,7 @@ class PushWorker:
         self.connection = None
         self.channel = None
         self.fcm_url = "https://fcm.googleapis.com/fcm/send"
+        self.api_gateway_url = settings.API_GATEWAY_URL
     
     async def connect(self):
         self.connection = await aio_pika.connect_robust(settings.RABBITMQ_URL)
@@ -59,12 +61,39 @@ class PushWorker:
             response.raise_for_status()
             logger.info(f"FCM Response: {response.json()}")
     
+    async def update_status(self, notification_id: str, status: str, error_message: str = None):
+        """Update notification status via API Gateway"""
+        try:
+            async with httpx.AsyncClient() as client:
+                payload = {
+                    "status": status,
+                    "delivered_at": datetime.utcnow().isoformat() if status == "delivered" else None,
+                    "error_message": error_message,
+                    "metadata": {"worker_type": "push"}
+                }
+                
+                response = await client.post(
+                    f"{self.api_gateway_url}/api/v1/push/status/?notification_id={notification_id}",
+                    json=payload,
+                    timeout=5.0
+                )
+                
+                if response.status_code == 200:
+                    logger.info(f"Updated status for {notification_id} to {status}")
+                else:
+                    logger.warning(f"Failed to update status: {response.status_code}")
+        except Exception as e:
+            logger.error(f"Error updating status: {e}")
+    
     async def process_message(self, message: aio_pika.IncomingMessage):
         async with message.process():
             try:
                 body = json.loads(message.body.decode())
                 notification_id = body.get("notification_id")
                 logger.info(f"Processing push notification {notification_id}")
+                
+                # Update status to processing
+                await self.update_status(notification_id, "processing")
                 
                 if not self.circuit_breaker.can_proceed():
                     logger.warning("Circuit breaker OPEN, requeueing")
@@ -83,6 +112,9 @@ class PushWorker:
                 self.circuit_breaker.record_success()
                 logger.info(f"Push notification sent: {notification_id}")
                 
+                # Update status to delivered
+                await self.update_status(notification_id, "delivered")
+                
             except Exception as e:
                 logger.error(f"Error processing push: {e}", exc_info=True)
                 self.circuit_breaker.record_failure()
@@ -90,6 +122,7 @@ class PushWorker:
                 retry_count = body.get("retry_count", 0)
                 if retry_count >= settings.MAX_RETRIES:
                     logger.error(f"Max retries exceeded, moving to DLQ")
+                    await self.update_status(notification_id, "failed", str(e))
                     await self.move_to_dlq(body)
                 else:
                     body["retry_count"] = retry_count + 1

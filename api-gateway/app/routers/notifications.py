@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, HTTPException, status, Request, Query
 from datetime import datetime
 import logging
+from typing import Optional
 
-from app.models.requests import NotificationRequest
+from app.models.requests import NotificationRequest, StatusUpdateRequest
 from app.models.responses import ApiResponse, NotificationResponse
 from app.services.queue_service import QueueService
 from app.services.user_service import UserService
@@ -123,4 +124,106 @@ async def get_notification_status(notification_id: str):
         message="Notification status retrieved",
         data=status_data
     )
+
+
+@router.post(
+    "/{notification_preference}/status/",
+    response_model=ApiResponse[dict],
+    status_code=status.HTTP_200_OK
+)
+async def update_notification_status_by_preference(
+    notification_preference: str,
+    status_update: StatusUpdateRequest,
+    notification_id: Optional[str] = Query(None, description="Notification ID to update")
+):
+    """
+    Update notification status for a specific notification preference (email/push)
+    
+    This endpoint is typically called by workers after delivery attempts
+    
+    - **notification_preference**: Type of notification (email or push)
+    - **notification_id**: Query parameter with the notification ID to update
+    - **status**: New status (pending, processing, delivered, failed)
+    - **error_message**: Optional error message if failed
+    - **delivered_at**: Optional delivery timestamp
+    - **metadata**: Optional additional metadata
+    """
+    if not notification_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="notification_id query parameter is required"
+        )
+    
+    # Validate notification preference
+    if notification_preference not in ["email", "push"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="notification_preference must be 'email' or 'push'"
+        )
+    
+    try:
+        updated_status = await queue_service.update_notification_status(
+            notification_id=notification_id,
+            status=status_update.status.value,
+            error_message=status_update.error_message,
+            delivered_at=status_update.delivered_at,
+            metadata=status_update.metadata
+        )
+        
+        return ApiResponse(
+            success=True,
+            message=f"Status updated successfully for {notification_preference} notification",
+            data=updated_status
+        )
+    
+    except Exception as e:
+        logger.error(f"Error updating notification status: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update notification status"
+        )
+
+
+@router.post(
+    "/notifications/{notification_id}/status",
+    response_model=ApiResponse[dict],
+    status_code=status.HTTP_200_OK
+)
+async def update_notification_status_by_id(
+    notification_id: str,
+    status_update: StatusUpdateRequest
+):
+    """
+    Update notification status by notification ID
+    
+    This is an alternative endpoint for updating status without specifying preference
+    
+    - **notification_id**: The notification ID to update
+    - **status**: New status (pending, processing, delivered, failed)
+    - **error_message**: Optional error message if failed
+    - **delivered_at**: Optional delivery timestamp
+    - **metadata**: Optional additional metadata
+    """
+    try:
+        updated_status = await queue_service.update_notification_status(
+            notification_id=notification_id,
+            status=status_update.status.value,
+            error_message=status_update.error_message,
+            delivered_at=status_update.delivered_at,
+            metadata=status_update.metadata
+        )
+        
+        return ApiResponse(
+            success=True,
+            message="Status updated successfully",
+            data=updated_status
+        )
+    
+    except Exception as e:
+        logger.error(f"Error updating notification status: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update notification status"
+        )
+
 

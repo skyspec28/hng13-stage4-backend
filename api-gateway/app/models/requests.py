@@ -9,6 +9,13 @@ class NotificationType(str, Enum):
     push = "push"
 
 
+class NotificationStatus(str, Enum):
+    pending = "pending"
+    processing = "processing"
+    delivered = "delivered"
+    failed = "failed"
+
+
 class NotificationRequest(BaseModel):
     notification_type: NotificationType
     user_id: UUID
@@ -33,4 +40,21 @@ class NotificationRequest(BaseModel):
                 "metadata": {"campaign_id": "summer_2024"}
             }
         }
+
+
+class StatusUpdateRequest(BaseModel):
+    status: NotificationStatus
+    error_message: Optional[str] = None
+    delivered_at: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "delivered",
+                "delivered_at": "2025-11-14T01:30:00Z",
+                "metadata": {"provider": "mailtrap"}
+            }
+        }
+
 

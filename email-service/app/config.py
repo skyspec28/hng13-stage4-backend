@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     FROM_EMAIL: str = "noreply@notification.com"
     TEMPLATE_SERVICE_URL: str = "http://localhost:8002"
+    API_GATEWAY_URL: str = "http://localhost:8000"
     WORKER_PREFETCH_COUNT: int = 10
     MAX_RETRIES: int = 5
     

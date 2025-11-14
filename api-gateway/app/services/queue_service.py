@@ -151,6 +151,50 @@ class QueueService:
         
         return None
     
+    async def update_notification_status(
+        self,
+        notification_id: str,
+        status: str,
+        error_message: Optional[str] = None,
+        delivered_at: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Update notification status in Redis"""
+        redis_client = await self.get_redis()
+        
+        # Get existing status
+        existing = await self.get_notification_status(notification_id)
+        if not existing:
+            # If notification doesn't exist, create a new status record
+            existing = {
+                "notification_id": notification_id,
+                "created_at": datetime.utcnow().isoformat()
+            }
+        
+        # Update status fields
+        existing["status"] = status
+        existing["updated_at"] = datetime.utcnow().isoformat()
+        
+        if error_message:
+            existing["error_message"] = error_message
+        
+        if delivered_at:
+            existing["delivered_at"] = delivered_at
+        
+        if metadata:
+            existing["metadata"] = metadata
+        
+        # Store updated status
+        await redis_client.setex(
+            f"notification:{notification_id}",
+            settings.STATUS_CACHE_TTL,
+            json.dumps(existing)
+        )
+        
+        logger.info(f"Updated notification {notification_id} status to {status}")
+        
+        return existing
+    
     async def close(self):
         """Close connections"""
         if self.connection and not self.connection.is_closed:
